@@ -1,0 +1,66 @@
+fastapi~=0.115.0
+uvicorn[standard]~=0.32.0
+# Production process manager (gunicorn managing uvicorn workers) - see Dockerfile.
+# uvicorn alone is used for local dev via `uvicorn app.main:app`.
+gunicorn~=23.0.0
+pydantic~=2.9.0
+pydantic[email]~=2.9.0
+pydantic-settings~=2.6.0
+python-multipart~=0.0.12
+slowapi~=0.1.9
+
+# Gemini
+google-genai~=1.2.0
+
+# Document extraction / generation
+pdfplumber~=0.11.4
+python-docx~=1.1.2
+reportlab~=4.2.5
+# PDF extraction fallback chain (see app/services/extraction.py): PyMuPDF and
+# pdfminer.six are tried per-page only if pdfplumber's own text looks poor.
+# pdfminer.six is already a transitive dependency of pdfplumber; pinned here
+# directly since extraction.py now imports it on its own.
+PyMuPDF~=1.28.0
+pdfminer.six==20260107
+# OCR fallback for scanned/image-only pages. NOTE: pytesseract is a thin
+# wrapper around the `tesseract` binary, which is a SYSTEM package, not
+# something this file installs - it must also be installed separately (e.g.
+# `apt-get install tesseract-ocr` in the Dockerfile for Cloud Run). Without
+# it, OCR is skipped gracefully (see _extract_via_ocr) rather than failing
+# the request.
+pytesseract~=0.3.13
+# Automatic repair of malformed JSON from Gemini responses (see
+# gemini_client.py's _try_repair_json) - trailing commas, missing closing
+# braces, markdown fences, smart quotes, duplicated commas.
+json-repair~=0.61.5
+
+# Database (PostgreSQL only - SQLite has been removed entirely)
+sqlalchemy~=2.0.35
+# Postgres / Neon (psycopg 3, binary wheel - no build toolchain needed in the image)
+psycopg[binary]~=3.2.3
+# Azure SQL only - needed if DATABASE_URL is an mssql+pyodbc:// URL. Remove this
+# and the msodbcsql18 driver install in the Dockerfile if you don't use Azure SQL.
+pyodbc~=5.2.0
+
+# Auth
+# bcrypt is pinned below 4.1: passlib 1.7.4's version-detection code breaks
+# on bcrypt>=4.1 (bcrypt dropped the `__about__` module it relies on) - this
+# is a known upstream incompatibility, not a mistake here.
+passlib[bcrypt]~=1.7.4
+bcrypt~=4.0.1
+python-jose[cryptography]~=3.3.0
+
+# Azure integrations (only touched when STORAGE_BACKEND=azure or AZURE_KEY_VAULT_URL
+# is set - safe to remove both this section and app/storage/azure_blob.py /
+# app/core/keyvault.py if you're deploying to GCP only).
+azure-storage-blob~=12.23.0
+azure-identity~=1.19.0
+
+# GCP integrations (only touched when STORAGE_BACKEND=gcs)
+google-cloud-storage~=2.18.0
+
+# Testing (tests/ - not needed at runtime, but kept in this single
+# requirements.txt rather than a separate dev-requirements file for
+# simplicity, matching how this project already handles everything else)
+pytest~=8.3.3
+httpx~=0.27.2
