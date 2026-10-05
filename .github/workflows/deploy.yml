@@ -1,0 +1,200 @@
+# Single, automatic CI/CD pipeline: push to `main` -> both services built,
+# pushed to Artifact Registry, and deployed to Cloud Run. No manual copy to
+# Cloud Shell, no manual `docker build`, no manual `gcloud run deploy`.
+#
+# Order matters: backend deploys FIRST because the frontend's Docker build
+# needs the backend's live Cloud Run URL baked in as VITE_API_URL (Vite
+# inlines VITE_-prefixed vars at build time, not read at container runtime -
+# see frontend/Dockerfile). Once the frontend's own URL is known, backend's
+# CORS allowlist is tightened to it in one last env-var-only update (no
+# rebuild) - see the final step.
+#
+# Supersedes backend-cicd-gcp.yml / frontend-cicd-gcp.yml (removed - they
+# targeted a different region/service/repo naming and would have double-
+# deployed conflicting resources if left active alongside this workflow).
+# The Azure-targeted backend-cicd.yml / frontend-cicd.yml are untouched -
+# unrelated target, no conflict.
+#
+# Auth: google-github-actions/auth using a Google Cloud service-account
+# JSON key stored as the GCP_CREDENTIALS repository secret (see
+# CICD_SETUP.md for how to generate and add it).
+name: Deploy to Cloud Run
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+env:
+  PROJECT_ID: developer-project-likhitha
+  REGION: asia-south1
+  REPOSITORY: resume-builder
+  BACKEND_SERVICE: backend
+  FRONTEND_SERVICE: frontend
+
+jobs:
+  test-backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # `python -m pytest`, not bare `pytest` - only the `-m` form adds cwd
+      # (backend/, via working-directory above) to sys.path, which
+      # tests/conftest.py's `import app...` needs to resolve the `app`
+      # package. See backend-cicd.yml's matching comment for the failure
+      # this fixes ("ModuleNotFoundError: No module named 'app'").
+      - name: Run backend test suite
+        run: python -m pytest tests/ -v
+
+  test-frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check
+        run: npm run lint
+
+      # PR/CI sanity build only - VITE_API_URL isn't known yet (the real
+      # backend URL only exists after the deploy job's backend step below).
+      # The real production build happens again in the deploy job's Docker
+      # build, with the real URL as a build arg.
+      - name: Build (sanity check)
+        env:
+          VITE_API_URL: "http://localhost:8000"
+        run: npm run build
+
+  deploy:
+    needs: [test-backend, test-frontend]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      # 1. Checkout repository
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 2. Authenticate to Google Cloud (service-account JSON key)
+      # project_id kept explicit (not left to the key's own embedded
+      # project) so every later `gcloud`/`docker` command below - none of
+      # which pass --project themselves - keeps resolving the correct
+      # active project.
+      - id: auth
+        name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          credentials_json: ${{ secrets.GCP_CREDENTIALS }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      # 3. Configure Docker authentication
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+      # 4 + 5. Build backend Docker image, push to Artifact Registry
+      - name: Build and push backend image
+        working-directory: backend
+        run: |
+          IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/backend:${{ github.sha }}"
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+          echo "BACKEND_IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      # 6. Deploy backend to Cloud Run
+      - name: Deploy backend to Cloud Run
+        run: |
+          gcloud run deploy "$BACKEND_SERVICE" \
+            --image "$BACKEND_IMAGE" \
+            --region "$REGION" \
+            --platform managed \
+            --allow-unauthenticated \
+            --memory 512Mi \
+            --cpu 1 \
+            --concurrency 40 \
+            --timeout 300 \
+            --min-instances 0 \
+            --max-instances 10 \
+            --service-account "${{ secrets.GCP_RUNTIME_SERVICE_ACCOUNT }}" \
+            --update-env-vars "GEMINI_MODEL=gemini-2.5-flash,STORAGE_BACKEND=gcs,GCS_BUCKET_NAME=${{ secrets.GCS_BUCKET_NAME }},GOOGLE_CLOUD_PROJECT=${PROJECT_ID}" \
+            --set-secrets "GEMINI_API_KEY=gemini-api-key:latest,JWT_SECRET_KEY=jwt-secret-key:latest,DATABASE_URL=database-url:latest,DEFAULT_ADMIN_PASSWORD=default-admin-password:latest"
+
+          echo "BACKEND_URL=$(gcloud run services describe "$BACKEND_SERVICE" --region "$REGION" --format='value(status.url)')" >> "$GITHUB_ENV"
+
+      # 7 + 8. Build frontend Docker image (backend's live URL baked in as
+      # VITE_API_URL), push to Artifact Registry
+      - name: Build and push frontend image
+        working-directory: frontend
+        run: |
+          IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/frontend:${{ github.sha }}"
+          docker build --build-arg VITE_API_URL="$BACKEND_URL" -t "$IMAGE" .
+          docker push "$IMAGE"
+          echo "FRONTEND_IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      # 9. Deploy frontend to Cloud Run
+      - name: Deploy frontend to Cloud Run
+        run: |
+          gcloud run deploy "$FRONTEND_SERVICE" \
+            --image "$FRONTEND_IMAGE" \
+            --region "$REGION" \
+            --platform managed \
+            --allow-unauthenticated \
+            --memory 256Mi \
+            --cpu 1 \
+            --concurrency 80 \
+            --timeout 60 \
+            --min-instances 0 \
+            --max-instances 5
+
+          echo "FRONTEND_URL=$(gcloud run services describe "$FRONTEND_SERVICE" --region "$REGION" --format='value(status.url)')" >> "$GITHUB_ENV"
+
+      # Not one of the 9 requested steps, but required for correctness: the
+      # frontend's URL isn't known until its first deploy above, so CORS is
+      # tightened to it here (env-var update only, no rebuild) instead of
+      # left wide-open or guessed at backend-deploy time.
+      #
+      # ALLOWED_ORIGINS also keeps localhost:5173 alongside the deployed
+      # frontend URL, so local dev can call the prod backend directly. The
+      # value itself contains a comma (two origins), which collides with
+      # --update-env-vars's own comma-as-pair-separator syntax - the
+      # "^##^" prefix switches that separator to "##" for this flag so the
+      # comma inside ALLOWED_ORIGINS is treated as a literal, not a second
+      # KEY=VALUE pair (see gcloud topic escaping).
+      - name: Lock backend CORS to the deployed frontend URL
+        run: |
+          gcloud run services update "$BACKEND_SERVICE" --region "$REGION" \
+            --update-env-vars "^##^ALLOWED_ORIGINS=http://localhost:5173,$FRONTEND_URL##FRONTEND_URL=$FRONTEND_URL##BACKEND_URL=$BACKEND_URL"
+
+      - name: Deployment summary
+        run: |
+          echo "Backend:  $BACKEND_URL"
+          echo "Frontend: $FRONTEND_URL"

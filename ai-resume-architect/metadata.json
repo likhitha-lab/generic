@@ -1,0 +1,5 @@
+{
+  "name": "AI Resume Architect",
+  "description": "A professional AI-driven resume builder that generates ATS-friendly resumes using Gemini, supporting PDF and Word exports.",
+  "requestFramePermissions": []
+}

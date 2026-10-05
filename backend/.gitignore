@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.log
+.pytest_cache/
+local_data/
+
+# Env files - never commit real secrets, keep the .example template
+.env
+.env.*
+**/.env
+**/.env.*
+!.env.example
+!**/.env.example

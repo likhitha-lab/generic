@@ -1,0 +1,87 @@
+@import "tailwindcss";
+
+/* Enterprise design system - single source of truth (Tailwind v4 CSS-first
+   config; there is no tailwind.config.js in this project). Generates
+   bg-brand-*, text-accent-*, border-brand-*, etc. utility classes.
+   Visual tokens only - no component behavior lives here. */
+@theme {
+  /* Primary - Dataflix Blue */
+  --color-brand-50: #eff6ff;
+  --color-brand-100: #dbeafe;
+  --color-brand-200: #bfdbfe;
+  --color-brand-300: #93c5fd;
+  --color-brand-400: #60a5fa;
+  --color-brand-500: #3b82f6;
+  --color-brand-600: #2563eb;
+  --color-brand-700: #1d4ed8;
+  --color-brand-800: #1e40af;
+  --color-brand-900: #1e3a8a;
+
+  /* Secondary - Indigo/Violet accent */
+  --color-accent-50: #f5f3ff;
+  --color-accent-100: #ede9fe;
+  --color-accent-200: #ddd6fe;
+  --color-accent-300: #c4b5fd;
+  --color-accent-400: #a78bfa;
+  --color-accent-500: #8b5cf6;
+  --color-accent-600: #7c3aed;
+  --color-accent-700: #6d28d9;
+  --color-accent-800: #5b21b6;
+  --color-accent-900: #4c1d95;
+
+  /* Semantic status colors - named design-system tokens (bg-success-100,
+     text-warning-600, border-danger-500, etc) instead of reaching for raw
+     green, amber, or red utilities ad hoc. Chosen to match the existing
+     green and red already used across the app (same hex family), so this
+     is a naming and standardization pass, not a recolor. */
+  --color-success-50: #f0fdf4;
+  --color-success-100: #dcfce7;
+  --color-success-500: #22c55e;
+  --color-success-600: #16a34a;
+  --color-success-700: #15803d;
+
+  --color-warning-50: #fffbeb;
+  --color-warning-100: #fef3c7;
+  --color-warning-500: #f59e0b;
+  --color-warning-600: #d97706;
+  --color-warning-700: #b45309;
+
+  --color-danger-50: #fef2f2;
+  --color-danger-100: #fee2e2;
+  --color-danger-500: #ef4444;
+  --color-danger-600: #dc2626;
+  --color-danger-700: #b91c1c;
+
+  /* Dark enterprise theme - exact values from the executive design spec.
+     Flat (non-scaled) custom colors - Tailwind v4 generates bg-bg,
+     bg-surface, bg-surface-2, text-ink, text-ink-muted utilities from
+     these without needing a numeric shade suffix. Borders use Tailwind's
+     built-in white/[0.08] arbitrary-opacity syntax directly at each call
+     site instead of a token, since rgba(255,255,255,.08) IS exactly
+     white at 8% opacity - no separate value to maintain. */
+  --color-bg: #07101c;
+  --color-surface: #0e1726;
+  --color-surface-2: #141e31;
+  --color-ink: #f8fafc;
+  --color-ink-muted: #a7b2c8;
+
+  --font-sans: "Inter", "Manrope", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+@layer base {
+  body {
+    @apply antialiased;
+    background-color: var(--color-bg);
+    color: var(--color-ink);
+  }
+
+  /* Consistent, visible keyboard focus ring app-wide (accessibility) -
+     replaces the browser default outline with one that matches the brand
+     color and is visible on both light and dark backgrounds, without
+     changing any element's function. */
+  :focus-visible {
+    outline: 2px solid var(--color-brand-500);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+}
