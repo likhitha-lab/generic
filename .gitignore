@@ -1,0 +1,9 @@
+cat > .gitignore << EOF
+node_modules/
+.env
+dist/
+build/
+__pycache__/
+*.pyc
+.vscode/
+EOF.env
